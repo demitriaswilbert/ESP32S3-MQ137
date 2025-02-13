@@ -24,18 +24,34 @@ void setup()
 
     xTaskCreate(mq135_task, "mq135", 4096, NULL, 1, NULL);
     xTaskCreate(mq137_task, "mq137", 4096, NULL, 1, NULL);
+    pinMode(0, INPUT_PULLUP);
 }
 
 void loop()
 {
-    static float mq135_ppm, mq137_ppm;
+    static sensor_param_t mq135_param, mq137_param;
     if (xSemaphoreTake(sensor_data_lock, portMAX_DELAY) == pdTRUE)
     {
-        mq135_ppm = sensor_data.mq135_ppm;
-        mq137_ppm = sensor_data.mq137_ppm;
+        mq135_param = sensor_data.mq135;
+        mq137_param = sensor_data.mq137;
 
         xSemaphoreGive(sensor_data_lock);
-        Serial.printf("MQ135: %9.4f      MQ137: %9.4f\n", mq135_ppm, mq137_ppm);
+        Serial.printf("----------------------------------\n");
+        Serial.printf("Sensor | MQ135      | MQ137      |\n");
+        Serial.printf("----------------------------------\n");
+        Serial.printf("PPM    | %10.5f | %10.5f |\n", mq135_param.ppm, mq137_param.ppm);
+        Serial.printf("VRL    | %10.5f | %10.5f |\n", mq135_param.VRL, mq137_param.VRL);
+        Serial.printf("RS     | %10.5f | %10.5f |\n", mq135_param.rs, mq137_param.rs);
+        Serial.printf("R0     | %10.5f | %10.5f |\n", mq135_param.r0, mq137_param.r0);
+        Serial.printf("----------------------------------\n\n");
+
     }
-    vTaskDelay(200);
+
+    if (!digitalRead(0)) {
+        recalibrate_mq135();
+        recalibrate_mq137();
+        vTaskDelay(250);
+    }
+
+    vTaskDelay(250);
 }

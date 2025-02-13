@@ -4,25 +4,77 @@
 
 // Definitions
 #define Voltage_Resolution 5
-#define pin 6                 // Analog input 0 of your arduino
+#define pin 6                  // Analog input 0 of your arduino
 #define ADC_Bit_Resolution 12  // For arduino UNO/MEGA/NANO
-#define RatioMQ137CleanAir 3.6 // RS / R0 = 3.6 ppm
+#define RatioMQ137CleanAir 1 // RS / R0 = 3.6 ppm
+// #define RatioMQ137CleanAir 3.6 // RS / R0 = 3.6 ppm
 // #define calibration_button 13 //Pin to calibrate your sensor
 
+// #define MQ137_SLOPE_NH3 -0.243
+#define MQ137_SLOPE_NH3 -0.2717285079732674
+// #define MQ137_MIDPOINT_NH3 0.323
+#define MQ137_MIDPOINT_NH3 -0.22184874961635637
 
-#define MQ137_SLOPE_NH3 -0.243
-#define MQ137_MIDPOINT_NH3 0.323
+static void update_data_to_main(sensor_param_t &sensor_param)
+{
+    if (xSemaphoreTake(sensor_data_lock, portMAX_DELAY) == pdTRUE)
+    {
+        sensor_data.mq137 = sensor_param;
+        xSemaphoreGive(sensor_data_lock);
+    }
+}
 
-// Declare Sensor
+static bool is_calibrated = false;
 
-void mq137_task(void* param)
+void recalibrate_mq137()
+{
+    is_calibrated = false;
+}
+
+/*
+ * Program to measure gas in ppm using MQ sensor
+ * Program by: B.Aswinth Raj
+ * Website: www.circuitdigest.com
+ * Dated: 28-12-2017
+ */
+#define tmp_RL 10 // The value of resistor RL is 47K
+#define tmp_m -0.263 //Enter calculated Slope
+// #define tmp_m -0.2616480 // Enter calculated Slope
+
+#define tmp_b 0.42 //Enter calculated intercept
+// #define tmp_b -0.22195929408 // Enter calculated intercept
+#define tmp_Ro 29            // Enter found Ro value
+#define tmp_MQ_sensor 6      // Sensor is connected to A4
+
+void mq137_task1(void* param)
+{
+    sensor_param_t sensor_param = {NAN, NAN, NAN};
+    while (true)
+    {
+        float VRL;                                             // Voltage drop across the MQ sensor
+        float Rs;                                              // Sensor resistance at gas concentration
+        float ratio;                                           // Define variable for ratio
+        VRL = analogRead(tmp_MQ_sensor) * (5.0 / 4095.0);      // Measure the voltage drop and convert to 0-5V
+        Rs = ((5.0 * tmp_RL) / VRL) - tmp_RL;                  // Use formula to get Rs value
+        ratio = Rs / tmp_Ro;                                   // find ratio Rs/Ro
+        float ppm = pow(10, ((log10(ratio) - tmp_b) / tmp_m)); // use formula to calculate ppm
+        sensor_param.ppm = ppm;
+        sensor_param.VRL = VRL;
+        sensor_param.r0 = tmp_Ro;
+        sensor_param.rs = Rs;
+        update_data_to_main(sensor_param);
+        delay(200); // Sampling frequency
+    }
+}
+
+void mq137_task(void *param)
 {
     MQUnifiedsensor MQ137("Arduino", Voltage_Resolution, ADC_Bit_Resolution, pin, "MQ-137");
     // Set math model to calculate the PPM concentration and the value of constants
-    MQ137.setRegressionMethod(1); //_PPM =  a*ratio^b
+    MQ137.setRegressionMethod(0); //_PPM =  a*ratio^b
 
-    MQ137.setA(MQ137_MIDPOINT_NH3);
-    MQ137.setB(MQ137_SLOPE_NH3); // Configure the equation to to calculate NH4 concentration
+    MQ137.setA(MQ137_SLOPE_NH3);
+    MQ137.setB(MQ137_MIDPOINT_NH3); // Configure the equation to to calculate NH4 concentration
 
     /*
       Exponential regression:
@@ -39,58 +91,37 @@ void mq137_task(void* param)
     // Remarks: Configure the pin of arduino as input.
     /************************************************************************************/
     MQ137.init();
-    /*
-      //If the RL value is different from 10K please assign your RL value with the following method:
-      MQ137.setRL(10);
-    */
+
     /*****************************  MQ CAlibration ********************************************/
-    // Explanation:
-    // In this routine the sensor will measure the resistance of the sensor supposedly before being pre-heated
-    // and on clean air (Calibration conditions), setting up R0 value.
-    // We recomend executing this routine only on setup in laboratory conditions.
-    // This routine does not need to be executed on each restart, you can load your R0 value from eeprom.
-    // Acknowledgements: https://jayconsystems.com/blog/understanding-a-gas-sensor
+    // MQ137.serialDebug(true);
+    sensor_param_t sensor_param = {NAN, NAN, NAN};
+
+    // while (calibrate(MQ137, RatioMQ137CleanAir) != MQ_CAL_OK)
+    // {
+    //     update_data_to_main(sensor_param);
+    //     vTaskDelay(1000);
+    // }
 
     while (true)
     {
-        Serial.print("Calibrating please wait.");
-        float calcR0 = 0;
-        for (int i = 1; i <= 10; i++)
+        if (!is_calibrated)
         {
-            MQ137.update(); // Update data, the arduino will read the voltage from the analog pin
-            calcR0 += MQ137.calibrate(RatioMQ137CleanAir);
-            Serial.print(".");
+            sensor_param = {NAN, NAN, NAN};
+            update_data_to_main(sensor_param);
+            while (calibrate(MQ137, RatioMQ137CleanAir) != MQ_CAL_OK)
+            {
+                update_data_to_main(sensor_param);
+                vTaskDelay(1000);
+            }
+            is_calibrated = true;
         }
-        MQ137.setR0(calcR0 / 10);
-        Serial.println("  done!.");
-    
-        if (isinf(calcR0))
-        {
-            Serial.println("Warning: Conection issue, R0 is infinite (Open circuit detected) please check your wiring and supply");
-            vTaskDelay(1000);
-            continue;
-        }
-        if (calcR0 == 0)
-        {
-            Serial.println("Warning: Conection issue found, R0 is zero (Analog pin shorts to ground) please check your wiring and supply");
-            vTaskDelay(1000);
-            continue;
-        }
-        break;
-    }
-    
-    /*****************************  MQ CAlibration ********************************************/
-    // MQ137.serialDebug(true);
-    
-    while (true)
-    {
-        MQ137.update();      // Update data, the arduino will read the voltage from the analog pin
-        // Serial.printf("MQ137 PPM: %f\n", MQ137.readSensor());
-        float ppm = MQ137.readSensor();
-        if (xSemaphoreTake(sensor_data_lock, portMAX_DELAY) == pdTRUE) {
-            sensor_data.mq137_ppm = ppm;
-            xSemaphoreGive(sensor_data_lock);
-        }
-        delay(200);          // Sampling frequency
+
+        MQ137.update();
+        sensor_param.ppm = MQ137.readSensor();
+        sensor_param.VRL = MQ137.getVoltage(false);
+        sensor_param.r0 = MQ137.getR0();
+        sensor_param.rs = MQ137.getRS();
+        update_data_to_main(sensor_param);
+        delay(200); // Sampling frequency
     }
 }

@@ -3,12 +3,24 @@
 #include "main.h"
 // Definitions
 #define Voltage_Resolution 5
-#define pin 7                 // Analog input 0 of your arduino
+#define pin 7                 
 #define ADC_Bit_Resolution 12  // For arduino UNO/MEGA/NANO
 #define RatioMQ135CleanAir 3.6 // RS / R0 = 3.6 ppm
 // #define calibration_button 13 //Pin to calibrate your sensor
 
-// Declare Sensor
+static void update_data_to_main(sensor_param_t& sensor_param)
+{
+    if (xSemaphoreTake(sensor_data_lock, portMAX_DELAY) == pdTRUE) {
+        sensor_data.mq135 = sensor_param;
+        xSemaphoreGive(sensor_data_lock);
+    }
+}
+
+static bool is_calibrated = false;
+
+void recalibrate_mq135() {
+    is_calibrated = false;
+}
 
 void mq135_task(void* param)
 {
@@ -33,58 +45,37 @@ void mq135_task(void* param)
     // Remarks: Configure the pin of arduino as input.
     /************************************************************************************/
     MQ135.init();
-    /*
-      //If the RL value is different from 10K please assign your RL value with the following method:
-      MQ135.setRL(10);
-    */
-    /*****************************  MQ CAlibration ********************************************/
-    // Explanation:
-    // In this routine the sensor will measure the resistance of the sensor supposedly before being pre-heated
-    // and on clean air (Calibration conditions), setting up R0 value.
-    // We recomend executing this routine only on setup in laboratory conditions.
-    // This routine does not need to be executed on each restart, you can load your R0 value from eeprom.
-    // Acknowledgements: https://jayconsystems.com/blog/understanding-a-gas-sensor
 
-    while (true)
-    {
-        Serial.print("Calibrating please wait.");
-        float calcR0 = 0;
-        for (int i = 1; i <= 10; i++)
-        {
-            MQ135.update(); // Update data, the arduino will read the voltage from the analog pin
-            calcR0 += MQ135.calibrate(RatioMQ135CleanAir);
-            Serial.print(".");
-        }
-        MQ135.setR0(calcR0 / 10);
-        Serial.println("  done!.");
-    
-        if (isinf(calcR0))
-        {
-            Serial.println("Warning: Conection issue, R0 is infinite (Open circuit detected) please check your wiring and supply");
-            vTaskDelay(1000);
-            continue;
-        }
-        if (calcR0 == 0)
-        {
-            Serial.println("Warning: Conection issue found, R0 is zero (Analog pin shorts to ground) please check your wiring and supply");
-            vTaskDelay(1000);
-            continue;
-        }
-        break;
-    }
-    
     /*****************************  MQ CAlibration ********************************************/
     // MQ135.serialDebug(true);
+    sensor_param_t sensor_param = {NAN, NAN, NAN};
+
+    while (calibrate(MQ135, RatioMQ135CleanAir) != MQ_CAL_OK) 
+    {    
+        update_data_to_main(sensor_param);
+        vTaskDelay(1000);
+    }
 
     while (true)
     {
-        MQ135.update();      // Update data, the arduino will read the voltage from the analog pin
-        // Serial.printf("MQ135 PPM: %f\n", MQ135.readSensor());
-        float ppm = MQ135.readSensor();
-        if (xSemaphoreTake(sensor_data_lock, portMAX_DELAY) == pdTRUE) {
-            sensor_data.mq135_ppm = ppm;
-            xSemaphoreGive(sensor_data_lock);
+        if (!is_calibrated)
+        {
+            sensor_param = {NAN, NAN, NAN};
+            update_data_to_main(sensor_param);
+            while (calibrate(MQ135, RatioMQ135CleanAir) != MQ_CAL_OK) 
+            {    
+                update_data_to_main(sensor_param);
+                vTaskDelay(1000);
+            }
+            is_calibrated = true;
         }
+
+        MQ135.update();
+        sensor_param.ppm = MQ135.readSensor();
+        sensor_param.VRL = MQ135.getVoltage(false);
+        sensor_param.r0 = MQ135.getR0();
+        sensor_param.rs = MQ135.getRS();
+        update_data_to_main(sensor_param);
         delay(200);          // Sampling frequency
     }
 }
