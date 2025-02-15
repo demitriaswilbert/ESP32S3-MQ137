@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <MQUnifiedsensor.h>
+#include "controls.h"
 
 typedef struct {
     float ppm;
@@ -39,9 +40,10 @@ static inline mq_cal_e calibrate(MQUnifiedsensor& sensor, float ratio_clean_air)
     return MQ_CAL_OK;
 }
 
-
 void recalibrate_mq135();
 void recalibrate_mq137();
 
 extern SemaphoreHandle_t sensor_data_lock;
 extern sensor_data_t sensor_data;
+
+#define log_cdc(format, ...) Serial.printf(format "\n", ##__VA_ARGS__)

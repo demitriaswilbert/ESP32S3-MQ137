@@ -3,8 +3,8 @@
 #include "main.h"
 
 // Definitions
-#define Voltage_Resolution 5
-#define pin 6                  // Analog input 0 of your arduino
+#define Voltage_Resolution 3.3
+#define pin 13                 // Analog input 0 of your arduino
 #define ADC_Bit_Resolution 12  // For arduino UNO/MEGA/NANO
 #define RatioMQ137CleanAir 1 // RS / R0 = 3.6 ppm
 // #define RatioMQ137CleanAir 3.6 // RS / R0 = 3.6 ppm
@@ -38,36 +38,67 @@ void recalibrate_mq137()
  * Dated: 28-12-2017
  */
 #define tmp_RL 10 // The value of resistor RL is 47K
-#define tmp_m -0.263 //Enter calculated Slope
-// #define tmp_m -0.2616480 // Enter calculated Slope
+// #define tmp_m -0.263 //Enter calculated Slope
+#define tmp_m -0.2616480 // Enter calculated Slope
 
-#define tmp_b 0.42 //Enter calculated intercept
-// #define tmp_b -0.22195929408 // Enter calculated intercept
+// #define tmp_b 0.42 //Enter calculated intercept
+#define tmp_b -0.22195929408 // Enter calculated intercept
 #define tmp_Ro 29            // Enter found Ro value
-#define tmp_MQ_sensor 6      // Sensor is connected to A4
+#define tmp_MQ_sensor pin      // Sensor is connected to A4
 
-void mq137_task1(void* param)
+void mq137_calculate(float* pVrl, float* pRs)
+{
+    float vrl = analogRead(tmp_MQ_sensor) * (3.3 / 4095.0);
+
+    if (pVrl)
+        *pVrl = vrl;
+    if (pRs)
+        *pRs = ((5.0 * tmp_RL) / vrl) - tmp_RL;
+}
+
+void mq137_calibrate(float *pR0)
+{
+    float sum_r0 = 0;
+    for (int i = 0; i < 500; i++) {
+        float f;
+        mq137_calculate(NULL, &f);
+        sum_r0 += f;
+    }
+    sum_r0 /= 500;
+    *pR0 = sum_r0;
+}
+
+void mq137_task(void* param)
 {
     sensor_param_t sensor_param = {NAN, NAN, NAN};
+    float VRL;                                             // Voltage drop across the MQ sensor
+    float Rs;                                              // Sensor resistance at gas concentration
+    float ratio;    
+    float measured_r0;
+    // mq137_calibrate(&measured_r0);
     while (true)
     {
-        float VRL;                                             // Voltage drop across the MQ sensor
-        float Rs;                                              // Sensor resistance at gas concentration
-        float ratio;                                           // Define variable for ratio
-        VRL = analogRead(tmp_MQ_sensor) * (5.0 / 4095.0);      // Measure the voltage drop and convert to 0-5V
-        Rs = ((5.0 * tmp_RL) / VRL) - tmp_RL;                  // Use formula to get Rs value
-        ratio = Rs / tmp_Ro;                                   // find ratio Rs/Ro
+        if (!is_calibrated) 
+        {
+            sensor_param = {NAN, NAN, NAN};
+            update_data_to_main(sensor_param);
+            mq137_calibrate(&measured_r0);
+            vTaskDelay(1000);
+            is_calibrated = true;
+        }
+        mq137_calculate(&VRL, &Rs);
+        sensor_param.VRL = VRL;
+        sensor_param.rs = Rs;
+        sensor_param.r0 = measured_r0;
+        ratio = Rs / measured_r0;                                   // find ratio Rs/Ro
         float ppm = pow(10, ((log10(ratio) - tmp_b) / tmp_m)); // use formula to calculate ppm
         sensor_param.ppm = ppm;
-        sensor_param.VRL = VRL;
-        sensor_param.r0 = tmp_Ro;
-        sensor_param.rs = Rs;
         update_data_to_main(sensor_param);
         delay(200); // Sampling frequency
     }
 }
 
-void mq137_task(void *param)
+void mq137_task1(void *param)
 {
     MQUnifiedsensor MQ137("Arduino", Voltage_Resolution, ADC_Bit_Resolution, pin, "MQ-137");
     // Set math model to calculate the PPM concentration and the value of constants
