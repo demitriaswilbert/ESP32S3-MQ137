@@ -2,12 +2,30 @@
 #include <Arduino_JSON.h>
 #include "main.h"
 #include "rgb_led.h"
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
 
 extern void mq135_task(void* param);
 extern void mq137_task(void* param);
 
 SemaphoreHandle_t sensor_data_lock = NULL;
 sensor_data_t sensor_data = {0};
+
+float dht_humid = 0, dht_temp = 0;
+
+void dht22_task(void* param)
+{
+    DHT dht(4, DHT22);
+    dht.begin();
+    while (true)
+    {
+        dht.read(true);
+        dht_humid = dht.readHumidity(false);
+        dht_temp = dht.readTemperature(false);
+        vTaskDelay(2000);
+    }
+    vTaskDelete(NULL);
+}
 
 void sensor_read_task(void* param)
 {
@@ -44,6 +62,7 @@ void sensor_log_task(void* param)
     
             xSemaphoreGive(sensor_data_lock);
             int len = sprintf(buf,    "----------------------------------\n");
+            len += sprintf(buf + len, "Temp   | %10.5f | %10.5f |\n", dht_temp, dht_humid);
             len += sprintf(buf + len, "Sensor | MQ135      | MQ137      |\n");
             len += sprintf(buf + len, "----------------------------------\n");
             len += sprintf(buf + len, "PPM    | %10.5f | %10.5f |\n", mq135_param.ppm, mq137_param.ppm);
@@ -75,6 +94,7 @@ void setup()
     xTaskCreate(mq137_task, "mq137", 4096, NULL, 1, NULL);
     xTaskCreate(sensor_read_task, "sensor_read_task", 4096, NULL, 0, NULL);
     xTaskCreate(sensor_log_task, "sensor_log_task", 4096, NULL, 1, NULL);
+    xTaskCreate(dht22_task, "dht22_task", 4096, NULL, 2, NULL);
 
     vTaskDelete(NULL);
 }
