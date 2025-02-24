@@ -6,8 +6,8 @@
 #define Voltage_Resolution 3.3
 #define pin 13                 // Analog input 0 of your arduino
 #define ADC_Bit_Resolution 12  // For arduino UNO/MEGA/NANO
-#define RatioMQ137CleanAir 1 // RS / R0 = 3.6 ppm
-// #define RatioMQ137CleanAir 3.6 // RS / R0 = 3.6 ppm
+// #define RatioMQ137CleanAir 1 // RS / R0 = 3.6 ppm
+#define RatioMQ137CleanAir 3.6 // RS / R0 = 3.6 ppm
 // #define calibration_button 13 //Pin to calibrate your sensor
 
 // #define MQ137_SLOPE_NH3 -0.243
@@ -37,13 +37,13 @@ void recalibrate_mq137()
  * Website: www.circuitdigest.com
  * Dated: 28-12-2017
  */
-#define tmp_RL 10 // The value of resistor RL is 47K
+#define tmp_RL 1 // The value of resistor RL is 47K
 // #define tmp_m -0.263 //Enter calculated Slope
 #define tmp_m -0.2616480 // Enter calculated Slope
 
 // #define tmp_b 0.42 //Enter calculated intercept
 #define tmp_b -0.22195929408 // Enter calculated intercept
-#define tmp_Ro 29            // Enter found Ro value
+#define tmp_Ro 33            // Enter found Ro value
 #define tmp_MQ_sensor pin      // Sensor is connected to A4
 
 void mq137_calculate(float* pVrl, float* pRs)
@@ -65,7 +65,7 @@ void mq137_calibrate(float *pR0)
         sum_r0 += f;
     }
     sum_r0 /= 500;
-    *pR0 = sum_r0;
+    *pR0 = sum_r0 / 3.6;
 }
 
 void mq137_task(void* param)
